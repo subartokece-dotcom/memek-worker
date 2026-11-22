@@ -1,0 +1,89 @@
+name: Build Flutter
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        required: true
+        type: string
+      userId:
+        required: true
+        type: string
+      payload:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      - name: Download Source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p project
+          cd project
+          echo '${{ inputs.payload }}' > /tmp/payload.json
+          URL=$(jq -r '.url // empty' /tmp/payload.json)
+          if [ -z "$URL" ]; then
+            echo "URL kosong"
+            exit 1
+          fi
+
+          echo "Downloading from: $URL"
+          # Pakai token supaya bisa download dari private repo
+          curl -L \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            -o source.zip \
+            "$URL"
+
+          echo "File size:"
+          ls -lh source.zip
+
+          unzip -o source.zip
+
+          # Cari folder yang ada pubspec.yaml
+          if [ ! -f pubspec.yaml ]; then
+            DIR=$(find . -name "pubspec.yaml" | head -1 | xargs dirname)
+            if [ -n "$DIR" ] && [ "$DIR" != "." ]; then
+              echo "Found project in: $DIR"
+              cp -r "$DIR"/* .
+            fi
+          fi
+
+          echo "Isi folder sekarang:"
+          ls -la
+
+      - name: Flutter Build
+        working-directory: project
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ inputs.jobId }}
+          path: |
+            project/build/app/outputs/flutter-apk/*.apk
+            project/build/app/outputs/apk/release/*.apk
+          retention-days: 1
